@@ -1,0 +1,29 @@
+# Builds the 32-bit (D3D9) addon and keeps it as a downloadable artifact.
+name: build-addon32
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - name: Build x86
+        run: msbuild /m /p:Platform=x86 /p:Configuration=Release src/ReshadeEffectShaderToggler.sln
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ReshadeEffectShaderToggler-addon32
+          path: |
+            src/Win32/Release/ReshadeEffectShaderToggler.addon32
+            Shaders/
+            LICENSE
+            README.md
+          if-no-files-found: error
