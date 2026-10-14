@@ -1,5 +1,7 @@
 #include "RenderingManager.h"
 #include "PipelinePrivateData.h"
+#include <string>
+#include <unordered_set>
 
 using namespace Rendering;
 using namespace ShaderToggler;
@@ -8,6 +10,14 @@ using namespace std;
 
 size_t RenderingManager::g_charBufferSize = CHAR_BUFFER_SIZE;
 char RenderingManager::g_charBuffer[CHAR_BUFFER_SIZE];
+
+// Logs each distinct message once: the target lookup runs on every draw while hunting.
+static void LogTargetOnce(const string& message) {
+    static unordered_set<string> logged;
+    if (logged.insert(message).second) {
+        reshade::log::message(reshade::log::level::warning, ("[REST] Target: " + message).c_str());
+    }
+}
 
 void RenderingManager::EnumerateTechniques(effect_runtime* runtime, function<void(effect_runtime*, effect_technique, string&, string&)> func) {
     runtime->enumerate_techniques(nullptr, [func](effect_runtime* rt, effect_technique technique) {
@@ -197,6 +207,7 @@ const ResourceViewData RenderingManager::GetCurrentResourceView(command_list* cm
 
         if (rs == 0) {
             // Render targets may not have a resource bound in D3D12, in which case writes to them are discarded
+            LogTargetOnce("bound render target view has no resource");
             return active_data;
         }
 
@@ -205,11 +216,38 @@ const ResourceViewData RenderingManager::GetCurrentResourceView(command_list* cm
         resource_view_desc v_desc = device->get_resource_view_desc(rtvs[index]);
 
         if (!ValidFormat(deviceData.current_runtime, desc, group->getMatchSwapchainResolution())) {
+            LogTargetOnce("bound target rejected: " + to_string(desc.texture.width) + "x" + to_string(desc.texture.height) +
+                          " format=" + to_string(static_cast<uint32_t>(desc.texture.format)) +
+                          " type=" + to_string(static_cast<uint32_t>(desc.type)) + " samples=" + to_string(desc.texture.samples));
+            return active_data;
+        }
+
+        LogTargetOnce("using bound target " + to_string(desc.texture.width) + "x" + to_string(desc.texture.height) +
+                      " format=" + to_string(static_cast<uint32_t>(desc.texture.format)) +
+                      " type=" + to_string(static_cast<uint32_t>(desc.type)) + " samples=" + to_string(desc.texture.samples));
+        active_data.resource = rs;
+        active_data.format = v_desc.format;
+    } else if (action & (MATCH_EFFECT | MATCH_PREVIEW) && !group->getRenderToResourceViews() && device->get_api() == device_api::d3d9) {
+        // D3D9 games that set their render target once and never again (World of Warcraft 3.3.5) leave
+        // nothing tracked here: their draws go to the swap chain's back buffer, so use that.
+        resource rs = deviceData.current_runtime->get_current_back_buffer();
+        LogTargetOnce("no render target tracked (" + to_string(rtvs.size()) + " bound), falling back to the back buffer");
+
+        if (rs == 0) {
+            LogTargetOnce("no back buffer either");
+            return active_data;
+        }
+
+        resource_desc desc = device->get_resource_desc(rs);
+        if (!ValidFormat(deviceData.current_runtime, desc, group->getMatchSwapchainResolution())) {
+            LogTargetOnce("back buffer rejected: " + to_string(desc.texture.width) + "x" + to_string(desc.texture.height) +
+                          " format=" + to_string(static_cast<uint32_t>(desc.texture.format)) +
+                          " type=" + to_string(static_cast<uint32_t>(desc.type)) + " samples=" + to_string(desc.texture.samples));
             return active_data;
         }
 
         active_data.resource = rs;
-        active_data.format = v_desc.format;
+        active_data.format = desc.texture.format;
     } else if (action & (MATCH_EFFECT | MATCH_PREVIEW) && group->getRenderToResourceViews()) {
         uint32_t stageIndex = std::min(static_cast<uint32_t>(2), group->getRenderSRVShaderStage());
 

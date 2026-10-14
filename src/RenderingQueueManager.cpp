@@ -1,4 +1,6 @@
 #include "RenderingQueueManager.h"
+#include <string>
+#include <unordered_set>
 
 using namespace Rendering;
 using namespace ShaderToggler;
@@ -30,6 +32,17 @@ void RenderingQueueManager::_CheckCallForCommandList(ShaderData& sData,
             // The snapshot was taken before the group could be removed in the UI; skip retired entries.
             if (group->isRetired()) {
                 continue;
+            }
+
+            // Hunting diagnostics: once per state, so the log shows whether the hunted shader is drawn at all.
+            if (group->getId() == uiData.GetToggleGroupIdShaderEditing()) {
+                static unordered_set<uint32_t> logged;
+                const uint32_t key = (group->isActive() ? 1u : 0u) | (static_cast<uint32_t>(uiData.GetCurrentTabType()) << 1) | (sData.id << 8);
+                if (logged.insert(key).second) {
+                    reshade::log::message(reshade::log::level::warning,
+                        ("[REST] Hunt: hunted shader drawn (stage " + to_string(sData.id) + "), group active=" + to_string(group->isActive()) +
+                         ", settings tab=" + to_string(static_cast<uint32_t>(uiData.GetCurrentTabType()))).c_str());
+                }
             }
 
             if (group->isActive()) {
